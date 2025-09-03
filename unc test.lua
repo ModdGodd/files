@@ -1,6 +1,6 @@
 --// Crash-Proof Extended UNC Test
 -- Checks executor functions by existence only (no risky calls).
--- Outputs ✔️ and ❌ plus a final percentage score.
+-- Outputs ✔️ and ❌ plus a final percentage score.s
 
 local total, passed = 0, 0
 
