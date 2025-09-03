@@ -1,57 +1,117 @@
---// Crash-Proof UNC Test for Roblox Executors
--- Only runs tests proven safe, skips anything risky.
+--// Crash-Proof Extended UNC Test
+-- Checks executor functions by existence only (no risky calls).
+-- Outputs ✔️ and ❌ plus a final percentage score.
 
-local function log(name, result)
-    print(string.format("[UNC Test] %-20s | %s", name, tostring(result)))
+local total, passed = 0, 0
+
+local function test(name, fn)
+    total = total + 1
+    local ok = pcall(function()
+        if type(fn) == "function" then return true end
+        if fn ~= nil then return true end
+        return false
+    end)
+    local result = ok and (fn ~= nil)
+    if result then
+        passed = passed + 1
+        print("✔️ " .. name)
+    else
+        print("❌ " .. name)
+    end
 end
 
-local function exists(fn)
-    return type(fn) == "function"
-end
+print("----- Extended UNC Test Started -----")
 
-print("----- UNC Test Started -----")
+--// Environments
+test("getgenv", getgenv)
+test("getrenv", getrenv)
+test("getfenv", getfenv)
+test("setfenv", setfenv)
+test("getgc", getgc)
+test("getinstances", getinstances)
+test("getnilinstances", getnilinstances)
+test("getreg", getreg)
+test("getrenv", getrenv)
 
---// Environment Checks
-log("getgenv", exists(getgenv))
-log("getrenv", exists(getrenv))
-log("getgc", exists(getgc)) -- do not call, some executors crash
-log("getinstances", exists(getinstances))
-log("getnilinstances", exists(getnilinstances))
-log("getconnections", exists(getconnections))
-log("hookfunction", exists(hookfunction))
-log("debug.getinfo", (debug and exists(debug.getinfo)) or false)
+--// Metamethod / Hooking
+test("hookfunction", hookfunction)
+test("newcclosure", newcclosure)
+test("isourclosure", isourclosure)
+test("iscclosure", iscclosure)
+test("checkcaller", checkcaller)
+test("getcallingscript", getcallingscript)
+
+--// Debug Library
+test("debug.getinfo", debug and debug.getinfo)
+test("debug.getupvalue", debug and debug.getupvalue)
+test("debug.setupvalue", debug and debug.setupvalue)
+test("debug.getmetatable", debug and debug.getmetatable)
+test("debug.setmetatable", debug and debug.setmetatable)
 
 --// File System
-log("writefile", exists(writefile))
-log("readfile", exists(readfile))
-log("appendfile", exists(appendfile))
-log("delfile", exists(delfile))
-log("isfile", exists(isfile))
-log("listfiles", exists(listfiles))
-log("makefolder", exists(makefolder))
+test("writefile", writefile)
+test("readfile", readfile)
+test("appendfile", appendfile)
+test("delfile", delfile)
+test("isfile", isfile)
+test("isfolder", isfolder)
+test("listfiles", listfiles)
+test("makefolder", makefolder)
 
 --// HTTP
 local req = (syn and syn.request) or request or http_request
-log("http_request", exists(req))
+test("http_request", req)
+test("syn.request", syn and syn.request)
 
 --// Clipboard
-log("setclipboard", exists(setclipboard))
+test("setclipboard", setclipboard)
 
---// Drawing API (don’t create objects, only check)
-log("Drawing API", (Drawing and exists(Drawing.new)) or false)
+--// Cryptography
+test("crypt.encrypt", crypt and crypt.encrypt)
+test("crypt.decrypt", crypt and crypt.decrypt)
+test("crypt.hash", crypt and crypt.hash)
+test("crypt.generatekey", crypt and crypt.generatekey)
 
---// Roblox Instances (don’t create/destroy, only check safe globals)
-local safeServices = {
+--// Identity & Executor Info
+test("getidentity", getidentity)
+test("setidentity", setidentity)
+test("getexecutorname", getexecutorname)
+test("identifyexecutor", identifyexecutor)
+
+--// Drawing API (safe check only)
+test("Drawing.new", Drawing and Drawing.new)
+test("Drawing.clear", Drawing and Drawing.clear)
+
+--// Input / Mouse
+test("mouse1click", mouse1click)
+test("mouse1press", mouse1press)
+test("mouse1release", mouse1release)
+test("mouse2click", mouse2click)
+
+--// Roblox Services (safe pcall on GetService)
+local services = {
     "Players", "RunService", "TweenService", "UserInputService",
-    "HttpService", "SoundService", "MarketplaceService"
+    "HttpService", "SoundService", "MarketplaceService",
+    "TeleportService", "PathfindingService", "BadgeService",
 }
-for _, svc in ipairs(safeServices) do
+for _, svc in ipairs(services) do
+    total = total + 1
     local ok = pcall(function() return game:GetService(svc) end)
-    log(svc, ok)
+    if ok then
+        passed = passed + 1
+        print("✔️ " .. svc)
+    else
+        print("❌ " .. svc)
+    end
 end
 
---// Math + Utility
-log("math.pi", math and math.pi ~= nil)
-log("math.huge", math and math.huge ~= nil)
+--// Math & Utility
+test("math.pi", math and math.pi)
+test("math.huge", math and math.huge)
+test("task.spawn", task and task.spawn)
+test("task.wait", task and task.wait)
 
-print("----- UNC Test Completed (Crash-Proof Mode) -----")
+--// Final Score
+local percent = math.floor((passed / total) * 100)
+print("----- Extended UNC Test Completed -----")
+print(string.format("Passed %d/%d checks (%d%%)", passed, total, percent))
