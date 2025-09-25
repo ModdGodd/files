@@ -1,0 +1,233 @@
+-- Hitbox Expander v2.0: Holistic Anti-Detection (Made by char, Enhanced for Stability)
+-- Features: Gradual mods, error suppression, multi-part targeting, visual fallbacks, randomized throttling
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players, RunService, TweenService = game:GetService("Players"), game:GetService("RunService"), game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+local hitboxObjects, visualOverlays = {}, {}  -- Track direct mods and visual proxies
+local hitboxEnabled, rainbowMode = false, false
+local hitboxSizeBase, hitboxTransparency, hitboxColor = 5, 0.7, Color3.fromRGB(255, 0, 0)
+local debounceTime = 0  -- For throttling
+local resetInterval = 30  -- Seconds between subtle resets to evade detection
+
+-- Obfuscated defaults (slight randomization for natural variance)
+local defaultSizes = {  -- Per-part defaults
+    HumanoidRootPart = Vector3.new(2, 2, 1),
+    Head = Vector3.new(1, 1, 1),
+    Torso = Vector3.new(2, 1, 1),  -- R6 fallback
+    UpperTorso = Vector3.new(2, 2, 1),  -- R15
+    LeftArm = Vector3.new(1, 2, 1), RightArm = Vector3.new(1, 2, 1),
+    LeftLeg = Vector3.new(1, 2, 1), RightLeg = Vector3.new(1, 2, 1),
+    LeftUpperArm = Vector3.new(1, 2, 1), RightUpperArm = Vector3.new(1, 2, 1),  -- R15 limbs
+    LeftLowerArm = Vector3.new(1, 1.5, 1), RightLowerArm = Vector3.new(1, 1.5, 1),
+    LeftUpperLeg = Vector3.new(1, 2, 1), RightUpperLeg = Vector3.new(1, 2, 1),
+    LeftLowerLeg = Vector3.new(1, 2, 1), RightLowerLeg = Vector3.new(1, 2, 1)
+}
+local targetParts = {"HumanoidRootPart", "Head", "Torso", "UpperTorso", "LowerTorso", "Left Arm", "Right Arm", "Left Leg", "Right Leg", 
+                     "LeftUpperArm", "RightUpperArm", "LeftLowerArm", "RightLowerArm", "LeftHand", "RightHand",
+                     "LeftUpperLeg", "RightUpperLeg", "LeftLowerLeg", "RightLowerLeg", "LeftFoot", "RightFoot"}
+
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/main/Library.lua"))()
+local Window = Library:CreateWindow({Title="Hitbox Expander v2.0", Center=true, AutoShow=true})
+
+-- Utility: Safe property setter with pcall and gradual tween
+local function safeSetProperty(part, prop, value, duration)
+    if not part or not part.Parent then return end
+    local success, err = pcall(function()
+        if duration and duration > 0 then
+            local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+            local tween = TweenService:Create(part, tweenInfo, {[prop] = value})
+            tween:Play()
+        else
+            part[prop] = value
+        end
+    end)
+    if not success then
+        warn("SafeSet failed for " .. prop .. ": " .. tostring(err))  -- Log locally, but suppress in executor if needed
+    end
+end
+
+-- Utility: Create visual overlay fallback (client-side collision/visual aid)
+local function createVisualOverlay(player, rootPos)
+    local overlay = Instance.new("Part")
+    overlay.Name = "HB_Overlay_" .. player.Name .. "_" .. tick()  -- Unique name
+    overlay.Size = Vector3.new(hitboxSizeBase, hitboxSizeBase, hitboxSizeBase)
+    overlay.Transparency = hitboxTransparency
+    overlay.Color = hitboxColor
+    overlay.Material = Enum.Material.ForceField  -- Subtle glow
+    overlay.CanCollide = false
+    overlay.Anchored = true
+    overlay.Parent = workspace
+    visualOverlays[player] = overlay
+    
+    -- Weld to root and update position
+    local weld = Instance.new("WeldConstraint")
+    weld.Part0 = overlay
+    weld.Part1 = workspace:FindFirstChildOfClass("Part") or overlay  -- Fallback
+    weld.Parent = overlay
+    
+    -- Heartbeat position sync (throttled)
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            overlay.Position = player.Character.HumanoidRootPart.Position
+        else
+            overlay:Destroy()
+            conn:Disconnect()
+        end
+    end)
+end
+
+-- Gradual apply: Modifies parts incrementally
+local function graduallyApplyHitbox(player, step)
+    if player == LocalPlayer or not player.Character or player.Character.Humanoid.Health <= 0 then return end
+    local character = player.Character
+    local mods = hitboxObjects[player] or {}
+    
+    for _, partName in ipairs(targetParts) do
+        local part = character:FindFirstChild(partName:gsub(" ", ""))  -- Handle R6 spaces
+        if part and part:IsA("BasePart") then
+            local defaultSize = defaultSizes[partName] or Vector3.new(2, 2, 2)
+            local targetSize = Vector3.new(hitboxSizeBase * (1 + (step * 0.2)), hitboxSizeBase * (1 + (step * 0.2)), hitboxSizeBase * (1 + (step * 0.2)))
+            local jitter = math.random(-5, 5) / 100  -- Subtle randomization
+            targetSize = targetSize + Vector3.new(jitter, jitter, jitter)
+            
+            safeSetProperty(part, "Size", targetSize, 0.1 * step)  -- Gradual over steps
+            safeSetProperty(part, "Transparency", hitboxTransparency)
+            safeSetProperty(part, "Color", hitboxColor)
+            -- Avoid CanCollide/Material to reduce flags
+            
+            mods[part] = {OriginalSize = defaultSize, Step = step}
+        end
+    end
+    hitboxObjects[player] = mods
+    
+    -- Fallback if direct mod fails (e.g., locked parts)
+    if step == 0 then
+        createVisualOverlay(player, character.HumanoidRootPart.Position)
+    end
+end
+
+-- Core apply with retries
+local function applyHitbox(player)
+    if debounceTime > tick() then return end
+    debounceTime = tick() + math.random(100, 500) / 1000  -- Random 0.1-0.5s debounce
+    
+    coroutine.wrap(function()
+        task.wait(math.random(50, 150) / 100)  -- Initial random delay
+        local maxRetries = 3
+        for i = 1, maxRetries do
+            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health > 0 then
+                local steps = math.min(i, 5)  -- Gradual over 5 steps max
+                graduallyApplyHitbox(player, steps)
+                break
+            end
+            task.wait(0.2 * i)  -- Exponential backoff
+        end
+    end)()
+end
+
+-- Reset pulse for camouflage (every resetInterval)
+spawn(function()
+    while true do
+        task.wait(resetInterval)
+        if hitboxEnabled then
+            for player, mods in pairs(hitboxObjects) do
+                if player.Character then
+                    for part, data in pairs(mods) do
+                        if part and part.Parent then
+                            safeSetProperty(part, "Size", data.OriginalSize * 1.05, 0.05)  -- Brief "bump" to default
+                            task.wait(0.1)
+                            safeSetProperty(part, "Size", data.OriginalSize, 0)  -- Snap back
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- Player setup with extended wait
+local function setupPlayer(plr)
+    if plr == LocalPlayer then return end
+    local charConn
+    charConn = plr.CharacterAdded:Connect(function()
+        task.wait(math.random(800, 1500) / 1000)  -- 0.8-1.5s random delay for load
+        charConn:Disconnect()
+        applyHitbox(plr)
+    end)
+    if plr.Character then
+        applyHitbox(plr)  -- Initial if already loaded
+    end
+end
+
+for _, p in pairs(Players:GetPlayers()) do setupPlayer(p) end
+Players.PlayerAdded:Connect(setupPlayer)
+
+-- Cleanup on leave
+Players.PlayerRemoving:Connect(function(player)
+    if hitboxObjects[player] then
+        for _, overlay in pairs(visualOverlays[player] or {}) do overlay:Destroy() end
+        hitboxObjects[player] = nil
+        visualOverlays[player] = nil
+    end
+end)
+
+-- UI Setup
+local HitboxBox = Window:AddTab("Hitbox Expander", "target"):AddLeftGroupbox("Hitbox Settings")
+HitboxBox:AddToggle("EnableHitbox", {Text="Enable Hitbox Expander", Callback=function(s)
+    hitboxEnabled = s
+    for _, p in pairs(Players:GetPlayers()) do if p ~= LocalPlayer then applyHitbox(p) end end
+end})
+
+local function throttledUpdate(callback)
+    if debounceTime > tick() then return end
+    debounceTime = tick() + 0.2  -- Fixed throttle
+    task.wait(math.random(50, 100) / 100)
+    callback()
+    for _, p in pairs(Players:GetPlayers()) do if p ~= LocalPlayer then applyHitbox(p) end end
+end
+
+HitboxBox:AddSlider("HitboxSize", {Text="Hitbox Size", Default=5, Min=2, Max=15, Rounding=1, Callback=function(v)
+    hitboxSizeBase = v
+    throttledUpdate(function() end)
+end})
+
+HitboxBox:AddSlider("HitboxTransparency", {Text="Hitbox Transparency", Default=0.7, Min=0, Max=1, Rounding=0.1, Callback=function(v)
+    hitboxTransparency = v
+    throttledUpdate(function() end)
+end})
+
+local ColorBox = Window:AddTab("Hitbox Color", "palette"):AddLeftGroupbox("Hitbox Colors")
+local colors = {Red=Color3.new(1,0,0), Blue=Color3.new(0,0,1), Green=Color3.new(0,1,0), Yellow=Color3.new(1,1,0), Purple=Color3.fromRGB(128,0,128), Pink=Color3.fromRGB(255,105,180)}
+for name, col in pairs(colors) do
+    ColorBox:AddButton(name, function()
+        hitboxColor = col
+        throttledUpdate(function() end)
+    end)
+end
+ColorBox:AddToggle("RainbowHitbox", {Text="Rainbow Mode", Callback=function(s) rainbowMode = s end})
+
+-- Optimized Rainbow (every 0.1s, only if enabled)
+RunService.Heartbeat:Connect(function()
+    if rainbowMode and hitboxEnabled then
+        local h = (tick() % 5) / 5 + math.random(-10, 10)/1000  -- Jitter for subtlety
+        local col = Color3.fromHSV(h, 1, 1)
+        for player, mods in pairs(hitboxObjects) do
+            if player.Character then
+                for part in pairs(mods) do
+                    if part and part.Parent then
+                        safeSetProperty(part, "Color", col, 0)
+                    end
+                end
+                if visualOverlays[player] then
+                    safeSetProperty(visualOverlays[player], "Color", col, 0)
+                end
+            end
+        end
+    end
+end)
+
+Window:AddTab("Credits", "star"):AddLeftGroupbox("Credits"):AddLabel("Made by char | Enhanced for Anti-Detection")
